@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 jest.mock('@/services/backendApi/bots/botSessionFileController');
 const mocked = ctrl as unknown as Record<string, jest.Mock<any>>;
 
-function file(name: string, size = 100): File {
-  const f = new File(['x'.repeat(size)], name, { type: 'text/plain' });
+function file(name: string, size = 100, type = 'text/plain'): File {
+  const f = new File(['x'.repeat(size)], name, { type });
   // jsdom File 缺少 arrayBuffer,补齐供 directUpload SINGLE 路径使用。
   (f as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer = () =>
     Promise.resolve(new ArrayBuffer(size));
@@ -106,12 +106,32 @@ describe('botSessionFileService.uploadOne', () => {
   });
 
   it('完整上传后轮询到 ready', async () => {
-    const pending = botSessionFileService.uploadOne('bot-1', 'sess-1', 'user-1', file('a.pdf'), {});
+    const pending = botSessionFileService.uploadOne(
+      'bot-1',
+      'sess-1',
+      'user-1',
+      file('a.pdf', 100, 'application/pdf'),
+      {},
+    );
     await jest.advanceTimersByTimeAsync(2000);
     const res = await pending;
     expect(res.ok).toBe(true);
     expect((res as { data: { resourceId: string; status: string } }).data.resourceId).toBe('sr_1');
     expect((res as { data: { resourceId: string; status: string } }).data.status).toBe('ready');
+    expect(mocked.createUploadIntents).toHaveBeenCalledWith(
+      'bot-1',
+      'sess-1',
+      expect.any(Object),
+      {
+        files: [
+          expect.objectContaining({
+            filename: 'a.pdf',
+            mime_type: 'application/pdf',
+            size_bytes: 100,
+          }),
+        ],
+      },
+    );
     expect(mocked.uploadToUrl).toHaveBeenCalledWith(
       'https://oss/put',
       'PUT',

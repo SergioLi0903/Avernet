@@ -6,9 +6,6 @@ import uuid
 
 from injector import Module, inject, provider, singleton
 
-from agentclaw.community.api.session_resource_service import (
-    SessionResourceServiceProtocol,
-)
 from agentclaw.community.core.tc_file_upload_integrations.coordinator import (
     UploadCompletionCoordinator,
 )
@@ -47,11 +44,9 @@ class TcFileUploadIntegrationModule(Module):
     @inject
     def upload_completion_coordinator(
         self,
-        resource_service: SessionResourceServiceProtocol,
         completion_sender: HttpUploadCompletedSender,
     ) -> UploadCompletionCoordinator:
         return UploadCompletionCoordinator(
-            resource_service=resource_service,
             completion_sender=completion_sender,
             event_id_factory=lambda: f"evt_{uuid.uuid4().hex}",
         )

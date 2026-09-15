@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
 
@@ -72,12 +73,13 @@ class _NoopSender:
         return None
 
 
-class _RecordingSender:
+class _FailingSender:
     def __init__(self) -> None:
         self.payloads: list[dict] = []
 
     async def send(self, payload: dict) -> None:
         self.payloads.append(payload)
+        raise RuntimeError("ecb unavailable")
 
 
 class _Service:
@@ -149,12 +151,8 @@ async def test_upload_intent_keeps_client_mime_type_out_of_resource_service():
         group_id=None,
         members=[],
     )
-    service.get_status = lambda **kwargs: replace(  # type: ignore[method-assign]
-        _record(), status=SessionResourceStatus.READY
-    )
     sender = _RecordingSender()
     coordinator = UploadCompletionCoordinator(
-        resource_service=service,
         completion_sender=sender,
         event_id_factory=lambda: "evt_generated",
     )
@@ -162,19 +160,25 @@ async def test_upload_intent_keeps_client_mime_type_out_of_resource_service():
     result = await create_upload_intents(
         body=body,
         user=AuthenticatedUser("id", "owner-1", "owner-1"),
+        service=service,
         coordinator=coordinator,
     )
 
-    assert "mime_type" not in service.intent_kwargs
+    assert service.intent_kwargs == {
+        "owner_id": "owner-1",
+        "bot_id": "bot-1",
+        "session_key": "session-raw",
+        "scope_type": "friend_bot_chat",
+        "engine_type": "openclaw",
+        "filename": "report.pdf",
+        "target_entity_id": None,
+        "binding_id": None,
+        "size_bytes": 12,
+        "content_hash": "hash-1",
+    }
     assert "mime_type" not in result["files"][0]
-    await materialize_status(
-        "sr_001",
-        "bot-1",
-        "session-raw",
-        user=AuthenticatedUser("id", "owner-1", "owner-1"),
-        coordinator=coordinator,
-    )
-    assert sender.payloads[0]["mime_type"] == "application/pdf"
+    assert coordinator._contexts["sr_001"].mime_type == "application/pdf"
+    assert sender.payloads == []
 
 
 def test_upload_intent_request_accepts_positive_binding_id_only():
@@ -207,7 +211,6 @@ async def test_polling_only_reads_backend_service_state():
     user = AuthenticatedUser("id", "owner-1", "owner-1")
 
     coordinator = UploadCompletionCoordinator(
-        resource_service=service,
         completion_sender=_NoopSender(),
         event_id_factory=lambda: "evt_unused",
     )
@@ -216,6 +219,7 @@ async def test_polling_only_reads_backend_service_state():
         "bot-1",
         "session-raw",
         user=user,
+        service=service,
         coordinator=coordinator,
     )
 
@@ -236,19 +240,22 @@ async def test_ready_status_sends_full_resource_only_context():
     )
     sender = _RecordingSender()
     coordinator = UploadCompletionCoordinator(
-        resource_service=service,
         completion_sender=sender,
         event_id_factory=lambda: "evt_generated",
     )
-    coordinator.create_upload_intent(
-        owner_id="owner-1",
-        bot_id="bot-1",
+    coordinator.register_upload_context(
+        intent=service.create_upload_intent(
+            owner_id="owner-1",
+            bot_id="bot-1",
+            session_key="session-raw",
+            scope_type="friend_bot_chat",
+            engine_type="openclaw",
+            filename="report.pdf",
+            size_bytes=12,
+        ),
         session_key="session-raw",
         scope_type="friend_bot_chat",
-        engine_type="openclaw",
-        filename="report.pdf",
         mime_type="application/pdf",
-        size_bytes=12,
         conversation_id="conversation-1",
         group_id=None,
         members=[],
@@ -259,8 +266,12 @@ async def test_ready_status_sends_full_resource_only_context():
         "bot-1",
         "session-raw",
         user=AuthenticatedUser("id", "owner-1", "owner-1"),
+        service=service,
         coordinator=coordinator,
     )
+    # The detached notification task has not run while the primary response is returned.
+    assert sender.payloads == []
+    await asyncio.sleep(0)
 
     payload = sender.payloads[0]
     assert result["status"] == "ready"
@@ -269,6 +280,49 @@ async def test_ready_status_sends_full_resource_only_context():
     assert payload["conversation_id"] == "conversation-1"
     assert "transfer_id" not in payload
     assert "oss_url" not in payload
+
+
+@pytest.mark.asyncio
+async def test_ready_status_response_survives_sender_failure():
+    service = _Service()
+    service.get_status = lambda **kwargs: replace(  # type: ignore[method-assign]
+        _record(), status=SessionResourceStatus.READY
+    )
+    sender = _FailingSender()
+    coordinator = UploadCompletionCoordinator(
+        completion_sender=sender,
+        event_id_factory=lambda: "evt_generated",
+    )
+    coordinator.register_upload_context(
+        intent=service.create_upload_intent(
+            owner_id="owner-1",
+            bot_id="bot-1",
+            session_key="session-raw",
+            scope_type="friend_bot_chat",
+            engine_type="openclaw",
+            filename="report.pdf",
+            size_bytes=12,
+        ),
+        session_key="session-raw",
+        scope_type="friend_bot_chat",
+        mime_type="application/pdf",
+        conversation_id="conversation-1",
+        group_id=None,
+        members=[],
+    )
+
+    result = await materialize_status(
+        "sr_001",
+        "bot-1",
+        "session-raw",
+        user=AuthenticatedUser("id", "owner-1", "owner-1"),
+        service=service,
+        coordinator=coordinator,
+    )
+    await asyncio.sleep(0)
+
+    assert result["status"] == "ready"
+    assert len(sender.payloads) == 1
 
 
 @pytest.mark.asyncio

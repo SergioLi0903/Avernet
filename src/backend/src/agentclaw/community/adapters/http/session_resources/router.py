@@ -88,12 +88,13 @@ def _safe_content_headers(headers: object) -> dict[str, str]:
 async def create_upload_intents(
     body: UploadIntentRequest,
     user: AuthenticatedUser = Depends(get_current_user),
+    service: SessionResourceServiceProtocol = Injected(SessionResourceServiceProtocol),
     coordinator: UploadCompletionCoordinator = Injected(UploadCompletionCoordinator),
 ) -> dict:
     files = []
     try:
         for item in body.files:
-            intent = coordinator.create_upload_intent(
+            intent = service.create_upload_intent(
                 owner_id=user.staffId,
                 bot_id=body.bot_id,
                 session_key=body.session_key,
@@ -104,6 +105,11 @@ async def create_upload_intents(
                 binding_id=body.binding_id,
                 size_bytes=item.size_bytes,
                 content_hash=item.content_hash,
+            )
+            coordinator.register_upload_context(
+                intent=intent,
+                session_key=body.session_key,
+                scope_type=body.scope_type,
                 mime_type=item.mime_type,
                 conversation_id=body.conversation_id,
                 group_id=body.group_id,
@@ -153,19 +159,20 @@ async def materialize_status(
     bot_id: str,
     session_key: str,
     user: AuthenticatedUser = Depends(get_current_user),
+    service: SessionResourceServiceProtocol = Injected(SessionResourceServiceProtocol),
     coordinator: UploadCompletionCoordinator = Injected(UploadCompletionCoordinator),
 ) -> dict:
     try:
-        return _resource(
-            await coordinator.poll_materialize_status(
-                owner_id=user.staffId,
-                bot_id=bot_id,
-                session_key=session_key,
-                resource_id=resource_id,
-            )
+        record = service.get_status(
+            owner_id=user.staffId,
+            bot_id=bot_id,
+            session_key=session_key,
+            resource_id=resource_id,
         )
     except ValueError as exc:
         raise _domain_error(exc) from exc
+    coordinator.notify_in_background(record)
+    return _resource(record)
 
 
 @router.get("/pending")

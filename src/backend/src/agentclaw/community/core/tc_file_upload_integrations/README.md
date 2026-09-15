@@ -3,13 +3,14 @@
 ## Context Boundary
 
 ```yaml
-purpose: Direct ready-gated upload-completion notification.
+purpose: Non-blocking best-effort ready-gated upload-completion notification.
 provides:
   - UploadCompletionCoordinator
   - UploadCompletionContext
   - HttpUploadCompletedSender
 consumes:
-  - SessionResourceServiceProtocol
+  - SessionUploadIntent
+  - SessionResourceRecord
   - HttpClient
 internal_dependencies:
   - agentclaw.community.core.session_resources
@@ -18,9 +19,15 @@ internal_dependencies:
 
 ### Change impact
 
-This module wraps the OCB session-resource control plane and sends a direct
-resource-only notification once the observed materialization state is `ready`.
+The primary TC upload and materialization paths continue to call the OCB
+session-resource service directly. This module only observes a successful intent,
+retains an ephemeral completion context, and schedules one best-effort
+resource-only notification when `ready` is observed.
 
-This is a direct-chain-first implementation. It intentionally keeps the upload
-context, including the client-declared MIME type, in memory and does not persist
-that metadata in `ac_session_resource`.
+The internal TC and public OpenAPI upload surfaces keep their primary service
+calls unchanged. The public request accepts an optional normalized upload MIME
+type while the response remains the stable session-file contract. The upload
+context, including the client-declared MIME type, stays in memory and is not
+persisted in `ac_session_resource`. Context capture, task scheduling, and
+ECB delivery failures are logged as sidecar failures; they do not change TC API
+responses.
