@@ -8,6 +8,7 @@ class UploadIntentFile(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     size_bytes: int | None = Field(default=None, ge=0)
     content_hash: str | None = Field(default=None, max_length=128)
+    mime_type: str | None = Field(default=None, max_length=255)
 
 
 class UploadIntentRequest(BaseModel):
@@ -15,6 +16,9 @@ class UploadIntentRequest(BaseModel):
     session_key: str
     scope_type: str
     engine_type: str
+    conversation_id: str | None = Field(default=None, max_length=256)
+    group_id: str | None = Field(default=None, max_length=256)
+    members: list[str] = Field(default_factory=list, max_length=500)
     target_entity_id: str | None = Field(default=None, max_length=128)
     binding_id: int | None = Field(default=None, ge=1)
     files: list[UploadIntentFile] = Field(min_length=1, max_length=20)

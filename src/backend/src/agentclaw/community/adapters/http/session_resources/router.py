@@ -23,6 +23,9 @@ from agentclaw.community.core.session_resources.baas_client import (
     SessionFileUpstreamUnavailableError,
 )
 from agentclaw.community.core.session_resources.types import SessionResourceRecord
+from agentclaw.community.core.tc_file_upload_integrations.coordinator import (
+    UploadCompletionCoordinator,
+)
 from agentclaw.community.di import Injected
 
 router = APIRouter(prefix="/api/session-resources", tags=["session-resources"])
@@ -85,12 +88,12 @@ def _safe_content_headers(headers: object) -> dict[str, str]:
 async def create_upload_intents(
     body: UploadIntentRequest,
     user: AuthenticatedUser = Depends(get_current_user),
-    service: SessionResourceServiceProtocol = Injected(SessionResourceServiceProtocol),
+    coordinator: UploadCompletionCoordinator = Injected(UploadCompletionCoordinator),
 ) -> dict:
     files = []
     try:
         for item in body.files:
-            intent = service.create_upload_intent(
+            intent = coordinator.create_upload_intent(
                 owner_id=user.staffId,
                 bot_id=body.bot_id,
                 session_key=body.session_key,
@@ -101,6 +104,10 @@ async def create_upload_intents(
                 binding_id=body.binding_id,
                 size_bytes=item.size_bytes,
                 content_hash=item.content_hash,
+                mime_type=item.mime_type,
+                conversation_id=body.conversation_id,
+                group_id=body.group_id,
+                members=body.members,
             )
             files.append(
                 {
@@ -146,11 +153,11 @@ async def materialize_status(
     bot_id: str,
     session_key: str,
     user: AuthenticatedUser = Depends(get_current_user),
-    service: SessionResourceServiceProtocol = Injected(SessionResourceServiceProtocol),
+    coordinator: UploadCompletionCoordinator = Injected(UploadCompletionCoordinator),
 ) -> dict:
     try:
         return _resource(
-            service.get_status(
+            await coordinator.poll_materialize_status(
                 owner_id=user.staffId,
                 bot_id=bot_id,
                 session_key=session_key,

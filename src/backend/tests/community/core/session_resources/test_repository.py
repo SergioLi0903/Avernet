@@ -41,12 +41,17 @@ def _record() -> SessionResourceRecord:
 
 
 @pytest_asyncio.fixture
-async def repo():
+async def db():
     reset_for_tests()
-    db = SqliteDB()
-    await db.bootstrap()
+    sqlite_db = SqliteDB()
+    await sqlite_db.bootstrap()
+    yield sqlite_db
+    reset_for_tests()
+
+
+@pytest_asyncio.fixture
+async def repo(db):
     yield SessionResourceRepository(db)
-    reset_for_tests()
 
 
 @pytest.mark.asyncio

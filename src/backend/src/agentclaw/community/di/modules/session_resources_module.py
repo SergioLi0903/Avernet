@@ -32,7 +32,9 @@ from agentclaw.community.plugin_api.http_client import (
 from agentclaw.community.plugin_api.device_adapter_transport import (
     DeviceAdapterTransport,
 )
-from agentclaw.community.core.repository.implementations.platform.session_resource import SessionResourceRepository
+from agentclaw.community.core.repository.implementations.platform.session_resource import (
+    SessionResourceRepository,
+)
 
 
 class SessionResourcesModule(Module):
