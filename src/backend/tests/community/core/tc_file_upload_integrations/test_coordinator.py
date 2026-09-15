@@ -1,21 +1,26 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
+
 import pytest
 
+from agentclaw.community.core.ports.tc_resource_ready_port import TcResourceReadyEvent
 from agentclaw.community.core.session_resources.types import (
     SessionResourceRecord,
     SessionResourceStatus,
-    SessionUploadIntent,
-    UploadGrant,
 )
 from agentclaw.community.core.tc_file_upload_integrations.coordinator import (
-    UploadCompletionCoordinator,
+    TcResourceReadyCoordinator,
 )
 
 
-def _resource(status=SessionResourceStatus.DEVICE_SYNCING):
+def _resource(
+    resource_id: str = "sr_001",
+    status: SessionResourceStatus = SessionResourceStatus.READY,
+) -> SessionResourceRecord:
     return SessionResourceRecord(
-        resource_id="sr_001",
+        resource_id=resource_id,
         owner_id="user-1",
         bot_id="bot-1",
         scope_type="session",
@@ -34,127 +39,169 @@ def _resource(status=SessionResourceStatus.DEVICE_SYNCING):
     )
 
 
-def _intent(resource=_resource(SessionResourceStatus.UPLOAD_URL_ISSUED)):
-    return SessionUploadIntent(
-        resource=resource,
-        grant=UploadGrant(transfer_id="transfer-internal-1", upload_type="SINGLE"),
+class _Publisher:
+    def __init__(self, *, failure: Exception | None = None) -> None:
+        self.calls: list[TcResourceReadyEvent] = []
+        self.failure = failure
+        self.started = asyncio.Event()
+        self.release: asyncio.Event | None = None
+
+    async def publish(self, event: TcResourceReadyEvent) -> None:
+        self.calls.append(event)
+        self.started.set()
+        if self.release is not None:
+            await self.release.wait()
+        if self.failure is not None:
+            raise self.failure
+
+
+async def _settle(coordinator: TcResourceReadyCoordinator) -> None:
+    while coordinator._tasks:
+        await asyncio.gather(*tuple(coordinator._tasks), return_exceptions=True)
+
+
+def _coordinator(publisher: _Publisher, **kwargs) -> TcResourceReadyCoordinator:
+    return TcResourceReadyCoordinator(publisher=publisher, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_non_ready_observation_does_not_publish():
+    publisher = _Publisher()
+    coordinator = _coordinator(publisher)
+
+    coordinator.notify_in_background(
+        replace(_resource(), status=SessionResourceStatus.DEVICE_SYNCING)
+    )
+    await asyncio.sleep(0)
+
+    assert publisher.calls == []
+    assert coordinator._tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_ready_observation_publishes_the_stable_three_field_event_once():
+    publisher = _Publisher()
+    coordinator = _coordinator(publisher)
+
+    for _ in range(10):
+        coordinator.notify_in_background(_resource())
+    await _settle(coordinator)
+
+    assert [event.as_payload() for event in publisher.calls] == [
+        {
+            "schema_version": "1",
+            "event_id": "tc.resource.ready:sr_001",
+            "res_id": "sr_001",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_publisher_failure_is_contained_and_deduped_for_the_ttl():
+    publisher = _Publisher(failure=RuntimeError("sensitive downstream detail"))
+    coordinator = _coordinator(publisher)
+
+    coordinator.notify_in_background(_resource())
+    await _settle(coordinator)
+    coordinator.notify_in_background(_resource())
+    await _settle(coordinator)
+
+    assert len(publisher.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_in_flight_cap_drops_overload_without_tombstoning_it():
+    publisher = _Publisher()
+    publisher.release = asyncio.Event()
+    coordinator = _coordinator(publisher, max_in_flight=1)
+
+    coordinator.notify_in_background(_resource("sr_001"))
+    await publisher.started.wait()
+    coordinator.notify_in_background(_resource("sr_002"))
+
+    assert [event.res_id for event in publisher.calls] == ["sr_001"]
+    assert "sr_002" not in coordinator._recent
+
+    publisher.release.set()
+    await _settle(coordinator)
+    coordinator.notify_in_background(_resource("sr_002"))
+    await _settle(coordinator)
+
+    assert [event.res_id for event in publisher.calls] == ["sr_001", "sr_002"]
+
+
+@pytest.mark.asyncio
+async def test_dedupe_entry_expires_and_allows_a_later_observation():
+    now = [100.0]
+    publisher = _Publisher()
+    coordinator = _coordinator(
+        publisher,
+        dedupe_ttl_seconds=10.0,
+        monotonic=lambda: now[0],
     )
 
+    coordinator.notify_in_background(_resource())
+    await _settle(coordinator)
+    now[0] = 109.0
+    coordinator.notify_in_background(_resource())
+    await _settle(coordinator)
+    assert len(publisher.calls) == 1
 
-class _Sender:
-    def __init__(self, failures: int = 0):
-        self.calls = []
-        self.failures = failures
-
-    async def send(self, payload):
-        self.calls.append(payload)
-        if self.failures > 0:
-            self.failures -= 1
-            raise RuntimeError("ecb unavailable")
-
-
-@pytest.fixture
-def sender():
-    return _Sender()
-
-
-def _coordinator(sender):
-    return UploadCompletionCoordinator(
-        completion_sender=sender,
-        event_id_factory=lambda: "evt_generated",
-    )
-
-
-def _register(coordinator, **overrides):
-    values = {
-        "intent": _intent(),
-        "session_key": "session-raw",
-        "scope_type": "session",
-        "mime_type": "application/pdf",
-        "conversation_id": "conversation-1",
-        "group_id": None,
-        "members": [],
-    }
-    values.update(overrides)
-    return coordinator.register_upload_context(**values)
+    now[0] = 110.0
+    coordinator.notify_in_background(_resource())
+    await _settle(coordinator)
+    assert len(publisher.calls) == 2
 
 
 @pytest.mark.asyncio
-async def test_coordinator_registers_context_without_wrapping_resource_service(sender):
-    coordinator = _coordinator(sender)
+async def test_dedupe_cache_is_capacity_bounded_and_evicts_lru():
+    publisher = _Publisher()
+    coordinator = _coordinator(publisher, dedupe_max_entries=1)
 
-    _register(coordinator)
+    coordinator.notify_in_background(_resource("sr_001"))
+    await _settle(coordinator)
+    coordinator.notify_in_background(_resource("sr_002"))
+    await _settle(coordinator)
 
-    assert coordinator._contexts["sr_001"].mime_type == "application/pdf"
-    assert sender.calls == []
+    assert list(coordinator._recent) == ["sr_002"]
 
-
-@pytest.mark.asyncio
-async def test_coordinator_snapshots_group_context_at_upload_intent(sender):
-    coordinator = _coordinator(sender)
-
-    _register(
-        coordinator,
-        scope_type="group",
-        group_id="group-1",
-        members=["user-2", "bot-2"],
-    )
-
-    assert coordinator._contexts["sr_001"].scope_type == "group"
-    assert coordinator._contexts["sr_001"].group_id == "group-1"
-    assert coordinator._contexts["sr_001"].members == ["user-2", "bot-2"]
+    coordinator.notify_in_background(_resource("sr_001"))
+    await _settle(coordinator)
+    assert [event.res_id for event in publisher.calls] == [
+        "sr_001",
+        "sr_002",
+        "sr_001",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_coordinator_non_ready_does_not_send(sender):
-    coordinator = _coordinator(sender)
-    _register(coordinator)
+async def test_task_creation_failure_releases_the_reservation(monkeypatch):
+    publisher = _Publisher()
+    coordinator = _coordinator(publisher)
 
-    await coordinator.notify_if_ready(_resource(SessionResourceStatus.DEVICE_SYNCING))
-
-    assert sender.calls == []
-
-
-@pytest.mark.asyncio
-async def test_coordinator_ready_sends_resource_only_payload_once(sender):
-    coordinator = _coordinator(sender)
-    _register(coordinator)
-
-    first = await coordinator.notify_if_ready(_resource(SessionResourceStatus.READY))
-    second = await coordinator.notify_if_ready(_resource(SessionResourceStatus.READY))
-
-    payload = sender.calls[0]
-    assert first is None
-    assert second is None
-    assert payload["res_id"] == "sr_001"
-    assert payload["event_id"] == "evt_generated"
-    assert payload["session_id"] == "session-raw"
-    assert len(sender.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_sender_failure_does_not_escape_the_sidecar():
-    sender = _Sender(failures=1)
-    coordinator = _coordinator(sender)
-    _register(coordinator)
-
-    await coordinator.notify_if_ready(_resource(SessionResourceStatus.READY))
-    await coordinator.notify_if_ready(_resource(SessionResourceStatus.READY))
-
-    assert len(sender.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_background_notification_is_fire_and_forget(sender, monkeypatch):
-    coordinator = _coordinator(sender)
-    _register(coordinator)
-
-    def create_task(coro):
-        coro.close()
+    def fail_to_schedule(coro):
         raise RuntimeError("event loop unavailable")
 
-    monkeypatch.setattr("agentclaw.community.core.tc_file_upload_integrations.coordinator.asyncio.create_task", create_task)
+    monkeypatch.setattr(
+        "agentclaw.community.core.tc_file_upload_integrations.coordinator.asyncio.create_task",
+        fail_to_schedule,
+    )
 
-    coordinator.notify_in_background(_resource(SessionResourceStatus.READY))
+    coordinator.notify_in_background(_resource())
 
-    assert sender.calls == []
+    assert publisher.calls == []
+    assert coordinator._in_flight == set()
+    assert coordinator._tasks == set()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error"),
+    [
+        ({"max_in_flight": 0}, "max_in_flight_must_be_positive"),
+        ({"dedupe_ttl_seconds": 0}, "dedupe_ttl_seconds_must_be_positive"),
+        ({"dedupe_max_entries": 0}, "dedupe_max_entries_must_be_positive"),
+    ],
+)
+def test_coordinator_rejects_unbounded_configuration(kwargs, error):
+    with pytest.raises(ValueError, match=error):
+        _coordinator(_Publisher(), **kwargs)

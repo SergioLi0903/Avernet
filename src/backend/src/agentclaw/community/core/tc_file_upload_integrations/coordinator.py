@@ -1,129 +1,128 @@
-"""Non-blocking ready-gated upload-completion sidecar."""
+"""Bounded, non-blocking TC resource-ready notification coordination."""
 
 from __future__ import annotations
 
 import asyncio
-import logging
+from collections import OrderedDict
 from collections.abc import Callable
+import logging
+import time
 
+from agentclaw.community.core.ports.tc_resource_ready_port import (
+    TcResourceReadyEvent,
+    TcResourceReadyPublisherPort,
+)
 from agentclaw.community.core.session_resources.types import (
     SessionResourceRecord,
-    SessionUploadIntent,
+    SessionResourceStatus,
 )
-from agentclaw.community.core.tc_file_upload_integrations.upload_completion_events import (
-    UploadCompletedSender,
-    UploadCompletionContext,
-    build_completion_payload,
-    should_notify,
+from agentclaw.community.core.tc_file_upload_integrations.service_protocol import (
+    TcResourceReadyObserverProtocol,
 )
 
-logger = logging.getLogger("tc_upload_completion.coordinator")
+logger = logging.getLogger("tc_resource_ready.coordinator")
 
 
-class UploadCompletionCoordinator:
-    """Hold upload context in memory and make best-effort ECB notifications.
-
-    This coordinator is deliberately not a wrapper for the session-resource
-    control plane. The primary TC flow calls that service directly; this module
-    observes successful intents and schedules one best-effort, resource-only
-    notification when a ready state is observed.
-    """
+class TcResourceReadyCoordinator(TcResourceReadyObserverProtocol):
+    """Schedule at most one best-effort attempt per bounded retention window."""
 
     def __init__(
         self,
         *,
-        completion_sender: UploadCompletedSender,
-        event_id_factory: Callable[[], str],
+        publisher: TcResourceReadyPublisherPort,
+        max_in_flight: int = 8,
+        dedupe_ttl_seconds: float = 3600.0,
+        dedupe_max_entries: int = 10_000,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._completion_sender = completion_sender
-        self._event_id_factory = event_id_factory
-        self._contexts: dict[str, UploadCompletionContext] = {}
-        self._notified: set[str] = set()
-        self._notification_tasks: set[asyncio.Task[None]] = set()
-
-    def register_upload_context(
-        self,
-        *,
-        intent: SessionUploadIntent,
-        session_key: str,
-        scope_type: str,
-        mime_type: str | None = None,
-        conversation_id: str | None = None,
-        group_id: str | None = None,
-        members: list[str] | None = None,
-    ) -> None:
-        """Capture ephemeral metadata without making a successful intent fail."""
-        resource = intent.resource
-        try:
-            context = UploadCompletionContext(
-                event_id=self._event_id_factory(),
-                resource_id=resource.resource_id,
-                user_id=resource.owner_id,
-                bot_id=resource.bot_id,
-                file_name=resource.filename,
-                mime_type=mime_type,
-                size_bytes=resource.size_bytes,
-                session_id=session_key,
-                conversation_id=conversation_id,
-                scope_type=scope_type,
-                group_id=group_id,
-                members=list(members or []),
-            )
-            self._contexts[resource.resource_id] = context
-        except Exception:
-            logger.exception(
-                "tc_upload_completion.context_capture_failed resource_id=%s",
-                resource.resource_id,
-            )
+        if max_in_flight < 1:
+            raise ValueError("max_in_flight_must_be_positive")
+        if dedupe_ttl_seconds <= 0:
+            raise ValueError("dedupe_ttl_seconds_must_be_positive")
+        if dedupe_max_entries < 1:
+            raise ValueError("dedupe_max_entries_must_be_positive")
+        self._publisher = publisher
+        self._max_in_flight = max_in_flight
+        self._dedupe_ttl_seconds = dedupe_ttl_seconds
+        self._dedupe_max_entries = dedupe_max_entries
+        self._monotonic = monotonic
+        self._in_flight: set[str] = set()
+        self._recent: OrderedDict[str, float] = OrderedDict()
+        self._tasks: set[asyncio.Task[None]] = set()
 
     def notify_in_background(self, resource: SessionResourceRecord) -> None:
-        """Fire a detached task without affecting the TC response path."""
-        try:
-            if not self._is_pending(resource):
-                return
-            task = asyncio.create_task(self.notify_if_ready(resource))
-            self._notification_tasks.add(task)
-            task.add_done_callback(self._notification_tasks.discard)
-        except Exception:
-            logger.exception(
-                "tc_upload_completion.notification_schedule_failed resource_id=%s",
-                resource.resource_id,
-            )
-
-    async def notify_if_ready(self, resource: SessionResourceRecord) -> None:
-        """Try to send once while never leaking a sidecar failure to TC."""
-        if not self._is_pending(resource):
+        """Reserve and schedule one sidecar attempt without changing TC results."""
+        if resource.status is not SessionResourceStatus.READY:
             return
 
         resource_id = resource.resource_id
-        context = self._contexts[resource_id]
-        # Mark before sending so concurrent polling cannot enqueue duplicate sends.
-        self._notified.add(resource_id)
-        payload = build_completion_payload(context)
-        try:
-            await self._completion_sender.send(payload)
-        except Exception:
-            logger.exception(
-                "tc_upload_completion.send_failed "
-                "event_id=%s resource_id=%s session_id=%s bot_id=%s",
-                context.event_id,
-                context.resource_id,
-                context.session_id,
-                context.bot_id,
+        now = self._monotonic()
+        self._prune_recent(now)
+        if resource_id in self._in_flight or resource_id in self._recent:
+            return
+        if len(self._in_flight) >= self._max_in_flight:
+            logger.warning(
+                "tc_resource_ready.overloaded res_id=%s max_in_flight=%s",
+                resource_id,
+                self._max_in_flight,
             )
             return
-        logger.info(
-            "tc_upload_completion.sent "
-            "event_id=%s resource_id=%s session_id=%s bot_id=%s",
-            context.event_id,
-            context.resource_id,
-            context.session_id,
-            context.bot_id,
-        )
 
-    def _is_pending(self, resource: SessionResourceRecord) -> bool:
-        if not should_notify(resource):
-            return False
-        if resource.resource_id in self._notified:
-            return False
-        return resource.resource_id in self._contexts
+        self._in_flight.add(resource_id)
+        publish = self._publish(resource_id)
+        try:
+            task = asyncio.create_task(publish)
+        except Exception:
+            publish.close()
+            self._in_flight.discard(resource_id)
+            logger.error(
+                "tc_resource_ready.schedule_failed res_id=%s",
+                resource_id,
+            )
+            return
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _publish(self, resource_id: str) -> None:
+        event = TcResourceReadyEvent.for_resource(resource_id)
+        try:
+            await self._publisher.publish(event)
+        except asyncio.CancelledError:
+            logger.info(
+                "tc_resource_ready.cancelled event_id=%s res_id=%s",
+                event.event_id,
+                event.res_id,
+            )
+            raise
+        except Exception as exc:
+            logger.error(
+                "tc_resource_ready.publish_failed event_id=%s res_id=%s error_type=%s",
+                event.event_id,
+                event.res_id,
+                type(exc).__name__,
+            )
+        else:
+            logger.info(
+                "tc_resource_ready.published event_id=%s res_id=%s",
+                event.event_id,
+                event.res_id,
+            )
+        finally:
+            self._in_flight.discard(resource_id)
+            self._remember(resource_id, self._monotonic())
+
+    def _prune_recent(self, now: float) -> None:
+        while self._recent:
+            _, expires_at = next(iter(self._recent.items()))
+            if expires_at > now:
+                break
+            self._recent.popitem(last=False)
+
+    def _remember(self, resource_id: str, now: float) -> None:
+        self._recent[resource_id] = now + self._dedupe_ttl_seconds
+        self._recent.move_to_end(resource_id)
+        while len(self._recent) > self._dedupe_max_entries:
+            self._recent.popitem(last=False)
+
+
+__all__ = ["TcResourceReadyCoordinator"]

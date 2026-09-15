@@ -212,11 +212,6 @@ class SessionFileUpload(BaseModel):
         max_length=128,
         description="Optional client content hash.",
     )
-    mime_type: str | None = Field(
-        default=None,
-        max_length=255,
-        description="Optional client-reported MIME type for downstream context.",
-    )
 
 
 class SessionFileUploadIntentRequest(BaseModel):

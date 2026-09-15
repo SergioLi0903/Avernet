@@ -10,17 +10,17 @@ from pydantic import ValidationError
 
 from agentclaw.community.adapters.http.auth.models import AuthenticatedUser
 from agentclaw.community.adapters.http.session_resources.router import (
+    create_upload_intents,
     list_pending_session_resources,
     materialize_status,
     materialized_callback,
     stream_content,
+    upload_complete,
 )
 from agentclaw.community.adapters.http.session_resources.schemas import (
     MaterializedCallbackRequest,
+    UploadCompleteRequest,
     UploadIntentRequest,
-)
-from agentclaw.community.adapters.http.session_resources.router import (
-    create_upload_intents,
 )
 from agentclaw.community.core.session_resources.types import (
     SessionResourceRecord,
@@ -29,7 +29,7 @@ from agentclaw.community.core.session_resources.types import (
     UploadGrant,
 )
 from agentclaw.community.core.tc_file_upload_integrations.coordinator import (
-    UploadCompletionCoordinator,
+    TcResourceReadyCoordinator,
 )
 from agentclaw.community.plugin_api.device_adapter_transport import (
     DeviceAdapterStreamResponse,
@@ -60,31 +60,28 @@ def _record(**overrides):
     return SessionResourceRecord(**values)
 
 
-class _RecordingSender:
+class _RecordingObserver:
     def __init__(self) -> None:
-        self.payloads: list[dict] = []
+        self.records: list[SessionResourceRecord] = []
 
-    async def send(self, payload: dict) -> None:
-        self.payloads.append(payload)
-
-
-class _NoopSender:
-    async def send(self, payload: dict) -> None:
-        return None
+    def notify_in_background(self, resource: SessionResourceRecord) -> None:
+        self.records.append(resource)
 
 
-class _FailingSender:
+class _FailingPublisher:
     def __init__(self) -> None:
-        self.payloads: list[dict] = []
+        self.events = []
 
-    async def send(self, payload: dict) -> None:
-        self.payloads.append(payload)
-        raise RuntimeError("ecb unavailable")
+    async def publish(self, event) -> None:
+        self.events.append(event)
+        raise RuntimeError("downstream unavailable")
 
 
 class _Service:
     def __init__(self) -> None:
         self.callback_kwargs = None
+        self.complete_result = _record()
+        self.status_result = _record()
 
     def create_upload_intent(self, **kwargs):
         self.intent_kwargs = kwargs
@@ -93,9 +90,13 @@ class _Service:
             grant=UploadGrant(transfer_id="transfer-1", upload_type="SINGLE"),
         )
 
+    def complete_upload(self, **kwargs):
+        self.complete_kwargs = kwargs
+        return self.complete_result
+
     def get_status(self, **kwargs):
         self.status_kwargs = kwargs
-        return _record()
+        return self.status_result
 
     def list_pending(self, **kwargs):
         self.pending_kwargs = kwargs
@@ -132,7 +133,7 @@ class _Service:
 
 
 @pytest.mark.asyncio
-async def test_upload_intent_keeps_client_mime_type_out_of_resource_service():
+async def test_upload_intent_keeps_the_primary_service_contract_only():
     service = _Service()
     body = UploadIntentRequest(
         bot_id="bot-1",
@@ -144,24 +145,14 @@ async def test_upload_intent_keeps_client_mime_type_out_of_resource_service():
                 "filename": "report.pdf",
                 "size_bytes": 12,
                 "content_hash": "hash-1",
-                "mime_type": "application/pdf",
             }
         ],
-        conversation_id="conversation-1",
-        group_id=None,
-        members=[],
-    )
-    sender = _RecordingSender()
-    coordinator = UploadCompletionCoordinator(
-        completion_sender=sender,
-        event_id_factory=lambda: "evt_generated",
     )
 
     result = await create_upload_intents(
         body=body,
         user=AuthenticatedUser("id", "owner-1", "owner-1"),
         service=service,
-        coordinator=coordinator,
     )
 
     assert service.intent_kwargs == {
@@ -176,9 +167,21 @@ async def test_upload_intent_keeps_client_mime_type_out_of_resource_service():
         "size_bytes": 12,
         "content_hash": "hash-1",
     }
+    assert result["files"][0]["resource_id"] == "sr_001"
     assert "mime_type" not in result["files"][0]
-    assert coordinator._contexts["sr_001"].mime_type == "application/pdf"
-    assert sender.payloads == []
+
+
+def test_upload_intent_rejects_sidecar_authority_fields():
+    for field in ("conversation_id", "group_id", "members"):
+        with pytest.raises(ValidationError, match="extra_forbidden"):
+            UploadIntentRequest(
+                bot_id="bot-1",
+                session_key="session-raw",
+                scope_type="friend_bot_chat",
+                engine_type="openclaw",
+                files=[{"filename": "report.txt"}],
+                **{field: [] if field == "members" else "untrusted"},
+            )
 
 
 def test_upload_intent_request_accepts_positive_binding_id_only():
@@ -204,26 +207,44 @@ def test_upload_intent_request_accepts_positive_binding_id_only():
         )
 
 
+@pytest.mark.asyncio
+async def test_upload_complete_invokes_the_shared_observer():
+    service = _Service()
+    service.complete_result = replace(_record(), status=SessionResourceStatus.READY)
+    observer = _RecordingObserver()
+
+    result = await upload_complete(
+        UploadCompleteRequest(
+            bot_id="bot-1",
+            session_key="session-raw",
+            resource_id="sr_001",
+            transfer_id="transfer-1",
+        ),
+        user=AuthenticatedUser("id", "owner-1", "owner-1"),
+        service=service,
+        observer=observer,
+    )
+
+    assert result["status"] == "ready"
+    assert observer.records == [service.complete_result]
+
 
 @pytest.mark.asyncio
-async def test_polling_only_reads_backend_service_state():
+async def test_polling_invokes_the_shared_observer_even_before_ready():
     service = _Service()
-    user = AuthenticatedUser("id", "owner-1", "owner-1")
+    observer = _RecordingObserver()
 
-    coordinator = UploadCompletionCoordinator(
-        completion_sender=_NoopSender(),
-        event_id_factory=lambda: "evt_unused",
-    )
     result = await materialize_status(
         "sr_001",
         "bot-1",
         "session-raw",
-        user=user,
+        user=AuthenticatedUser("id", "owner-1", "owner-1"),
         service=service,
-        coordinator=coordinator,
+        observer=observer,
     )
 
     assert result["status"] == "device_syncing"
+    assert observer.records == [service.status_result]
     assert service.status_kwargs == {
         "owner_id": "owner-1",
         "bot_id": "bot-1",
@@ -233,33 +254,11 @@ async def test_polling_only_reads_backend_service_state():
 
 
 @pytest.mark.asyncio
-async def test_ready_status_sends_full_resource_only_context():
+async def test_ready_status_response_survives_async_publisher_failure():
     service = _Service()
-    service.get_status = lambda **kwargs: replace(  # type: ignore[method-assign]
-        _record(), status=SessionResourceStatus.READY
-    )
-    sender = _RecordingSender()
-    coordinator = UploadCompletionCoordinator(
-        completion_sender=sender,
-        event_id_factory=lambda: "evt_generated",
-    )
-    coordinator.register_upload_context(
-        intent=service.create_upload_intent(
-            owner_id="owner-1",
-            bot_id="bot-1",
-            session_key="session-raw",
-            scope_type="friend_bot_chat",
-            engine_type="openclaw",
-            filename="report.pdf",
-            size_bytes=12,
-        ),
-        session_key="session-raw",
-        scope_type="friend_bot_chat",
-        mime_type="application/pdf",
-        conversation_id="conversation-1",
-        group_id=None,
-        members=[],
-    )
+    service.status_result = replace(_record(), status=SessionResourceStatus.READY)
+    publisher = _FailingPublisher()
+    coordinator = TcResourceReadyCoordinator(publisher=publisher)
 
     result = await materialize_status(
         "sr_001",
@@ -267,73 +266,23 @@ async def test_ready_status_sends_full_resource_only_context():
         "session-raw",
         user=AuthenticatedUser("id", "owner-1", "owner-1"),
         service=service,
-        coordinator=coordinator,
+        observer=coordinator,
     )
-    # The detached notification task has not run while the primary response is returned.
-    assert sender.payloads == []
-    await asyncio.sleep(0)
-
-    payload = sender.payloads[0]
-    assert result["status"] == "ready"
-    assert payload["res_id"] == "sr_001"
-    assert payload["session_id"] == "session-raw"
-    assert payload["conversation_id"] == "conversation-1"
-    assert "transfer_id" not in payload
-    assert "oss_url" not in payload
-
-
-@pytest.mark.asyncio
-async def test_ready_status_response_survives_sender_failure():
-    service = _Service()
-    service.get_status = lambda **kwargs: replace(  # type: ignore[method-assign]
-        _record(), status=SessionResourceStatus.READY
-    )
-    sender = _FailingSender()
-    coordinator = UploadCompletionCoordinator(
-        completion_sender=sender,
-        event_id_factory=lambda: "evt_generated",
-    )
-    coordinator.register_upload_context(
-        intent=service.create_upload_intent(
-            owner_id="owner-1",
-            bot_id="bot-1",
-            session_key="session-raw",
-            scope_type="friend_bot_chat",
-            engine_type="openclaw",
-            filename="report.pdf",
-            size_bytes=12,
-        ),
-        session_key="session-raw",
-        scope_type="friend_bot_chat",
-        mime_type="application/pdf",
-        conversation_id="conversation-1",
-        group_id=None,
-        members=[],
-    )
-
-    result = await materialize_status(
-        "sr_001",
-        "bot-1",
-        "session-raw",
-        user=AuthenticatedUser("id", "owner-1", "owner-1"),
-        service=service,
-        coordinator=coordinator,
-    )
-    await asyncio.sleep(0)
+    while coordinator._tasks:
+        await asyncio.gather(*tuple(coordinator._tasks), return_exceptions=True)
 
     assert result["status"] == "ready"
-    assert len(sender.payloads) == 1
+    assert len(publisher.events) == 1
 
 
 @pytest.mark.asyncio
 async def test_pending_lists_only_control_plane_records():
     service = _Service()
-    user = AuthenticatedUser("id", "owner-1", "owner-1")
 
     result = await list_pending_session_resources(
         "bot-1",
         "session-raw",
-        user=user,
+        user=AuthenticatedUser("id", "owner-1", "owner-1"),
         service=service,
     )
 
@@ -346,8 +295,9 @@ async def test_pending_lists_only_control_plane_records():
 
 
 @pytest.mark.asyncio
-async def test_callback_uses_task_capability_and_does_not_store_absolute_path():
+async def test_callback_uses_task_capability_and_observes_the_applied_record():
     service = _Service()
+    observer = _RecordingObserver()
     body = MaterializedCallbackRequest(
         transfer_id="transfer-1",
         task_id="task-1",
@@ -364,16 +314,21 @@ async def test_callback_uses_task_capability_and_does_not_store_absolute_path():
         body,
         x_materialization_task_id="task-1",
         service=service,
+        observer=observer,
     )
 
     assert result == {"applied": True, "status": "ready"}
     stored = service.callback_kwargs["materialized_ref"]
     assert "canonical_bot_absolute_path" not in stored
     assert stored["path_hash"]
+    assert [record.status for record in observer.records] == [
+        SessionResourceStatus.READY
+    ]
 
 
 @pytest.mark.asyncio
-async def test_callback_rejects_wrong_task_capability():
+async def test_callback_rejects_wrong_task_capability_before_observation():
+    observer = _RecordingObserver()
     with pytest.raises(HTTPException) as exc:
         await materialized_callback(
             "sr_001",
@@ -386,22 +341,23 @@ async def test_callback_rejects_wrong_task_capability():
             ),
             x_materialization_task_id="wrong",
             service=_Service(),
+            observer=observer,
         )
 
     assert exc.value.status_code == 401
+    assert observer.records == []
 
 
 @pytest.mark.asyncio
 async def test_content_proxies_only_safe_headers_and_closes_upstream():
     service = _Service()
-    user = AuthenticatedUser("id", "owner-1", "owner-1")
 
     response = await stream_content(
         "sr_001",
         "bot-1",
         "session-raw",
         disposition="inline",
-        user=user,
+        user=AuthenticatedUser("id", "owner-1", "owner-1"),
         service=service,
     )
 

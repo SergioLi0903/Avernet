@@ -48,7 +48,6 @@ from agentclaw.community.adapters.http.openapi_v1.engine_runtime.sessions.schema
 )
 from agentclaw.community.adapters.http.openapi_v1.engine_runtime.sessions.converter_creation import reconcile_created_session
 from agentclaw.community.adapters.http.openapi_v1.engine_runtime.sessions.dependencies_session_files import OpenApiSessionFileAdapter
-from agentclaw.community.core.tc_file_upload_integrations.coordinator import UploadCompletionCoordinator
 from agentclaw.community.adapters.http.openapi_v1.engine_runtime.enums import RuntimeStage
 from agentclaw.community.adapters.http.openapi_v1.engine_runtime.params import (
     OwnerIdDep,
@@ -669,7 +668,6 @@ async def create_session_file_upload_intents(
     stage: StageQuery = RuntimeStage.DRAFT,
     relay: EngineRuntimeRelayProtocol = Injected(EngineRuntimeRelayProtocol),
     adapter: OpenApiSessionFileAdapter = Injected(OpenApiSessionFileAdapter),
-    coordinator: UploadCompletionCoordinator = Injected(UploadCompletionCoordinator),
 ) -> Envelope[SessionFileUploadIntentResult]:
     facts = await resolve_operable_bot(
         relay,
@@ -694,16 +692,6 @@ async def create_session_file_upload_intents(
         )
     except ValueError as exc:
         _session_file_not_found(exc)
-    for intent, item in zip(intents, body.files, strict=True):
-        coordinator.register_upload_context(
-            intent=intent,
-            session_key=session_id,
-            scope_type="openapi_session",
-            mime_type=item.mime_type,
-            conversation_id=session_id,
-            group_id=None,
-            members=[],
-        )
     files = [
         SessionFileUploadGrant(
             **_session_file_resource(intent.resource).model_dump(),
@@ -769,7 +757,6 @@ async def session_file_materialize_status(
     stage: StageQuery = RuntimeStage.DRAFT,
     relay: EngineRuntimeRelayProtocol = Injected(EngineRuntimeRelayProtocol),
     adapter: OpenApiSessionFileAdapter = Injected(OpenApiSessionFileAdapter),
-    coordinator: UploadCompletionCoordinator = Injected(UploadCompletionCoordinator),
 ) -> Envelope[SessionFile]:
     await resolve_operable_bot(
         relay, bot_id, caller_id=user_id, owner_id=owner_id, stage=stage.value,
@@ -784,7 +771,6 @@ async def session_file_materialize_status(
         )
     except ValueError as exc:
         _session_file_not_found(exc)
-    coordinator.notify_in_background(record)
     return envelope(_session_file_resource(record), request)
 
 

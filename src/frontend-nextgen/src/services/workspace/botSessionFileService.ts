@@ -22,7 +22,7 @@ import { directUpload, type UploadIntentView } from './botSessionFileUpload';
 import { resolveUserId } from './botSessionService';
 import { resolveGroupGatewayOrigin } from './groupChatProviderHelpers';
 import type { DomainError, DomainResult } from './identityService';
-import { isAllowedFileExt, resolveUploadMime } from './sessionFileUtils';
+import { isAllowedFileExt } from './sessionFileUtils';
 export { isLargeBotSessionFile } from './botSessionFileDownload';
 export type { UploadIntentView } from './botSessionFileUpload';
 export type { BotSessionFileView };
@@ -123,14 +123,7 @@ export const botSessionFileService = {
     try {
       const hash = await sha256Hex(file);
       const intents = await createUploadIntents(botId, sessionId, params, {
-        files: [
-          {
-            filename: file.name,
-            size_bytes: file.size,
-            mime_type: resolveUploadMime(file.name, file.type),
-            ...(hash ? { content_hash: hash } : {}),
-          },
-        ],
+        files: [{ filename: file.name, size_bytes: file.size, ...(hash ? { content_hash: hash } : {}) }],
       });
       const intent = mapIntent(intents.files[0]);
 

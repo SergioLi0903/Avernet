@@ -100,11 +100,10 @@ _SESSION_RESOURCES_EXEMPT_REASON = (
 )
 
 _TC_FILE_UPLOAD_INTEGRATION_EXEMPT_REASON = (
-    "TC upload-completion sidecar is a coordinator boundary, not a standalone "
-    "backend route: no production HTTP surface lands in the open-source core yet "
-    "and a real flow needs the product upload intake plus a live ECB endpoint. "
-    "Covered by upload-intent, ready-gate, stable-event, retry, sender, and DI "
-    "tests; drain when a product-facing poller/router drives the coordinator."
+    "TC resource-ready notification is a bounded best-effort sidecar, not an "
+    "independent user-facing flow: the live path needs the product upload intake "
+    "plus a reachable ECB endpoint. Covered by exact event, bounded coordinator, "
+    "HTTP publisher, adapter, and DI tests; drain when singlebox has both sides."
 )
 
 _RUNTIME_BINDING_EXEMPT_REASON = (

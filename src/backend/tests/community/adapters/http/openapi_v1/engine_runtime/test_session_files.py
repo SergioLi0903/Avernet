@@ -14,10 +14,12 @@ from injector import Injector, Module
 from agentclaw.community.adapters.http.openapi_v1.dependencies import require_principal
 from agentclaw.community.adapters.http.openapi_v1.engine_runtime.sessions import router
 from agentclaw.community.api.engine_runtime_service import EngineRuntimeRelayProtocol
+from agentclaw.community.api.tc_resource_ready_observer import (
+    TcResourceReadyObserverProtocol,
+)
 from agentclaw.community.api.session_resource_service import SessionResourceServiceProtocol
 from agentclaw.community.core.runtime_binding.service import RuntimeBindingResolutionService
 from agentclaw.community.core.session_resources.types import SessionResourceStatus
-from agentclaw.community.core.tc_file_upload_integrations.coordinator import UploadCompletionCoordinator
 from tests.community.adapters.http.openapi_v1.conftest import (
     mount_public_error_handlers,
     user_scoped_client,
@@ -141,6 +143,14 @@ class _Resources:
 
 
 
+class _Observer:
+    def __init__(self) -> None:
+        self.records = []
+
+    def notify_in_background(self, resource) -> None:
+        self.records.append(resource)
+
+
 class _RuntimeBindings:
     def __init__(self) -> None:
         self.requests: list[object] = []
@@ -148,18 +158,6 @@ class _RuntimeBindings:
     def resolve(self, request):
         self.requests.append(request)
         return SimpleNamespace(binding_id=101)
-
-
-class _CompletionCoordinator:
-    def __init__(self) -> None:
-        self.contexts: list[dict] = []
-        self.notifications: list[str] = []
-
-    def register_upload_context(self, **kwargs):
-        self.contexts.append(kwargs)
-
-    def notify_in_background(self, resource):
-        self.notifications.append(resource.resource_id)
 
 
 @pytest.fixture
@@ -178,18 +176,18 @@ def runtime_bindings() -> _RuntimeBindings:
 
 
 @pytest.fixture
-def completion_coordinator() -> _CompletionCoordinator:
-    return _CompletionCoordinator()
+def observer() -> _Observer:
+    return _Observer()
 
 
 @pytest.fixture
-def client(relay, resources, runtime_bindings, completion_coordinator):
+def client(relay, resources, runtime_bindings, observer):
     class _Bindings(Module):
         def configure(self, binder):
             binder.bind(EngineRuntimeRelayProtocol, to=relay)
             binder.bind(SessionResourceServiceProtocol, to=resources)
             binder.bind(RuntimeBindingResolutionService, to=runtime_bindings)
-            binder.bind(UploadCompletionCoordinator, to=completion_coordinator)
+            binder.bind(TcResourceReadyObserverProtocol, to=observer)
             # These six file operations are ``Check(MEMBER)``; the gate runs
             # ahead of every one of them.
             bind_seam_from_relay(binder, relay)
@@ -215,13 +213,10 @@ def test_upload_rejects_all_internal_routing_fields(client, resources):
     assert resources.calls == []
 
 
-def test_upload_resolves_binding_then_keeps_mime_in_sidecar_context(
-    client, relay, resources, runtime_bindings, completion_coordinator
+def test_upload_resolves_binding_then_calls_legacy_service(
+    client, relay, resources, runtime_bindings
 ):
-    response = client.post(
-        _base() + "/upload-intents",
-        json={"files": [{"filename": "report.pdf", "mime_type": "application/pdf"}]},
-    )
+    response = client.post(_base() + "/upload-intents", json={"files": [{"filename": "report.txt"}]})
     assert response.status_code == 201, response.json()
     data = response.json()["data"]
     assert data["files"][0]["resource_id"] == "sr_1"
@@ -233,12 +228,6 @@ def test_upload_resolves_binding_then_keeps_mime_in_sidecar_context(
     assert resources.calls[0][0] == "intent"
     assert resources.calls[0][1]["binding_id"] == 101
     assert resources.calls[0][1]["scope_type"] == "openapi_session"
-    assert "mime_type" not in resources.calls[0][1]
-    assert len(completion_coordinator.contexts) == 1
-    assert completion_coordinator.contexts[0]["intent"].resource.resource_id == "sr_1"
-    assert completion_coordinator.contexts[0]["mime_type"] == "application/pdf"
-    assert completion_coordinator.contexts[0]["scope_type"] == "openapi_session"
-    assert completion_coordinator.contexts[0]["conversation_id"] == SESSION_ID
     assert runtime_bindings.requests[0].bot_id == BOT
     assert runtime_bindings.requests[0].owner_id == OWNER
     assert runtime_bindings.requests[0].actor_user_id == OWNER
@@ -361,7 +350,7 @@ def test_content_masks_missing_engine_resource_as_openapi_404(client, resources)
     assert response.json()["message"] == "Not found"
 
 
-def test_complete_and_status_return_public_resources(client, resources, completion_coordinator):
+def test_complete_and_status_return_public_resources(client, resources, observer):
     complete = ok(client.post(
         _base() + "/upload-complete",
         json={"resource_id": "sr_1", "transfer_id": "tr_1"},
@@ -371,7 +360,10 @@ def test_complete_and_status_return_public_resources(client, resources, completi
     assert complete["resource_id"] == "sr_1"
     assert status["resource_id"] == "sr_1"
     assert [name for name, _ in resources.calls] == ["complete", "status"]
-    assert completion_coordinator.notifications == ["sr_1"]
+    assert [record.status for record in observer.records] == [
+        SessionResourceStatus.DEVICE_SYNCING,
+        SessionResourceStatus.UPLOAD_URL_ISSUED,
+    ]
 
 
 def test_openapi_never_exposes_raw_materialization_error_details(client, resources):

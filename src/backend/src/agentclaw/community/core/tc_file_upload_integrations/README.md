@@ -3,31 +3,32 @@
 ## Context Boundary
 
 ```yaml
-purpose: Non-blocking best-effort ready-gated upload-completion notification.
+purpose: Observe authoritative TC resource state and coordinate bounded, best-effort resource-ready publication.
 provides:
-  - UploadCompletionCoordinator
-  - UploadCompletionContext
-  - HttpUploadCompletedSender
+  - TcResourceReadyCoordinator
+  - TcResourceReadyObserverProtocol
 consumes:
-  - SessionUploadIntent
+  - TcResourceReadyPublisherPort
   - SessionResourceRecord
-  - HttpClient
 internal_dependencies:
+  - agentclaw.community.core.ports
   - agentclaw.community.core.session_resources
-  - agentclaw.community.plugin_api
 ```
 
 ### Change impact
 
-The primary TC upload and materialization paths continue to call the OCB
-session-resource service directly. This module only observes a successful intent,
-retains an ephemeral completion context, and schedules one best-effort
-resource-only notification when `ready` is observed.
+The existing TC upload and materialization APIs remain the authoritative primary
+flow. Every production path that observes a `READY` resource invokes the same
+observer: legacy upload completion and status polling, the materialization
+callback, and the formal OpenAPI session-file completion and status operations.
 
-The internal TC and public OpenAPI upload surfaces keep their primary service
-calls unchanged. The public request accepts an optional normalized upload MIME
-type while the response remains the stable session-file contract. The upload
-context, including the client-declared MIME type, stays in memory and is not
-persisted in `ac_session_resource`. Context capture, task scheduling, and
-ECB delivery failures are logged as sidecar failures; they do not change TC API
-responses.
+The coordinator publishes only `schema_version`, a deterministic `event_id`,
+and `res_id`. It does not retain browser-supplied session, group, member, user,
+file, transfer, or download data. The receiving OCB/ECB integration resolves
+those facts from authoritative storage by `res_id`.
+
+Delivery remains best-effort and non-blocking. In-flight work is capped, and
+completed attempts are deduplicated by a bounded TTL/LRU cache. Scheduling,
+overload, and downstream delivery failures are logged without changing the TC
+API result. There is no durable outbox, retry worker, or restart-safe guarantee
+in this phase.

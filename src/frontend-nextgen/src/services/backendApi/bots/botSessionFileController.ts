@@ -32,7 +32,6 @@ export interface UploadIntentFileInput {
   filename: string;
   size_bytes: number;
   content_hash?: string;
-  mime_type?: string;
 }
 
 /** upload-intents 响应中的上传凭据(文档 §4.1)。 */

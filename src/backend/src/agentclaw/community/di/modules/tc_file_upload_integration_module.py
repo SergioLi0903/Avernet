@@ -1,16 +1,22 @@
-"""DI wiring for direct TC upload-completion notifications."""
+"""DI wiring for bounded TC resource-ready notifications."""
+
 from __future__ import annotations
 
 from typing import Annotated
-import uuid
 
 from injector import Module, inject, provider, singleton
 
-from agentclaw.community.core.tc_file_upload_integrations.coordinator import (
-    UploadCompletionCoordinator,
+from agentclaw.community.adapters.http.tc_file_upload_integrations.tc_resource_ready_publisher import (
+    HttpTcResourceReadyPublisher,
 )
-from agentclaw.community.core.tc_file_upload_integrations.upload_completion_sender import (
-    HttpUploadCompletedSender,
+from agentclaw.community.api.tc_resource_ready_observer import (
+    TcResourceReadyObserverProtocol,
+)
+from agentclaw.community.core.ports.tc_resource_ready_port import (
+    TcResourceReadyPublisherPort,
+)
+from agentclaw.community.core.tc_file_upload_integrations.coordinator import (
+    TcResourceReadyCoordinator,
 )
 from agentclaw.community.di.config import EcbConfig
 from agentclaw.community.plugin_api.http_client import (
@@ -24,29 +30,34 @@ class TcFileUploadIntegrationModule(Module):
     @singleton
     @provider
     @inject
-    def upload_completed_sender(
+    def tc_resource_ready_publisher(
         self,
         ecb_config: EcbConfig,
         http_client: Annotated[HttpClient, QUALIFIER_GENERAL],
-    ) -> HttpUploadCompletedSender:
+    ) -> TcResourceReadyPublisherPort:
         base_url = (
             ecb_config.base_url_pre
             if get_current_env() == "pre"
             else ecb_config.base_url
         )
-        return HttpUploadCompletedSender(
+        return HttpTcResourceReadyPublisher(
             base_url=base_url,
             http_client=http_client,
+            timeout_seconds=ecb_config.resource_ready_timeout_seconds,
+            worker_threads=ecb_config.resource_ready_worker_threads,
         )
 
     @singleton
     @provider
     @inject
-    def upload_completion_coordinator(
+    def tc_resource_ready_observer(
         self,
-        completion_sender: HttpUploadCompletedSender,
-    ) -> UploadCompletionCoordinator:
-        return UploadCompletionCoordinator(
-            completion_sender=completion_sender,
-            event_id_factory=lambda: f"evt_{uuid.uuid4().hex}",
+        publisher: TcResourceReadyPublisherPort,
+        ecb_config: EcbConfig,
+    ) -> TcResourceReadyObserverProtocol:
+        return TcResourceReadyCoordinator(
+            publisher=publisher,
+            max_in_flight=ecb_config.resource_ready_max_in_flight,
+            dedupe_ttl_seconds=ecb_config.resource_ready_dedupe_ttl_seconds,
+            dedupe_max_entries=ecb_config.resource_ready_dedupe_max_entries,
         )
