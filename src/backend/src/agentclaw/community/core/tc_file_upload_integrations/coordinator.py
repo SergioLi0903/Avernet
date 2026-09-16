@@ -8,9 +8,9 @@ from collections.abc import Callable
 import logging
 import time
 
-from agentclaw.community.core.ports.tc_resource_ready_port import (
+from agentclaw.community.plugin_api.tc_resource_ready import (
     TcResourceReadyEvent,
-    TcResourceReadyPublisherPort,
+    TcResourceReadyPublisherPlugin,
 )
 from agentclaw.community.core.session_resources.types import (
     SessionResourceRecord,
@@ -29,7 +29,7 @@ class TcResourceReadyCoordinator(TcResourceReadyObserverProtocol):
     def __init__(
         self,
         *,
-        publisher: TcResourceReadyPublisherPort,
+        publisher: TcResourceReadyPublisherPlugin,
         max_in_flight: int = 8,
         dedupe_ttl_seconds: float = 3600.0,
         dedupe_max_entries: int = 10_000,
@@ -107,9 +107,9 @@ class TcResourceReadyCoordinator(TcResourceReadyObserverProtocol):
                 event.event_id,
                 event.res_id,
             )
+            self._remember(resource_id, self._monotonic())
         finally:
             self._in_flight.discard(resource_id)
-            self._remember(resource_id, self._monotonic())
 
     def _prune_recent(self, now: float) -> None:
         while self._recent:

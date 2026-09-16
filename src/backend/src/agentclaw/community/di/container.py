@@ -161,7 +161,7 @@ def build_injector(
         AccessModule(),
         ResourcesModule(),
         SessionResourcesModule(),
-        TcFileUploadIntegrationModule(),
+        TcFileUploadIntegrationModule(local=profile is not DeployProfile.CORP),
         SpacesModule(),
         WorkOrdersModule(),
         HarnessModule(),

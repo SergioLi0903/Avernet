@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentclaw.community.core.ports.tc_resource_ready_port import (
+from agentclaw.community.plugin_api.tc_resource_ready import (
     TC_RESOURCE_READY_SCHEMA_VERSION,
     TcResourceReadyEvent,
 )
@@ -42,7 +42,7 @@ def test_resource_ready_event_never_contains_authority_or_download_fields(forbid
 
 
 def test_resource_ready_event_rejects_an_empty_resource_id():
-    with pytest.raises(ValueError, match="resource_id_required"):
+    with pytest.raises(ValueError, match="res_id_required"):
         TcResourceReadyEvent.for_resource("")
 
 
@@ -53,7 +53,7 @@ def test_resource_ready_event_rejects_an_empty_resource_id():
         (
             TC_RESOURCE_READY_SCHEMA_VERSION,
             "tc.resource.ready:sr_other",
-            "event_id_must_match_resource_id",
+            "event_id_mismatch",
         ),
     ],
 )

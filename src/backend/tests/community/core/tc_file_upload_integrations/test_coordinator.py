@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from agentclaw.community.core.ports.tc_resource_ready_port import TcResourceReadyEvent
+from agentclaw.community.plugin_api.tc_resource_ready import TcResourceReadyEvent
 from agentclaw.community.core.session_resources.types import (
     SessionResourceRecord,
     SessionResourceStatus,
@@ -97,7 +97,7 @@ async def test_ready_observation_publishes_the_stable_three_field_event_once():
 
 
 @pytest.mark.asyncio
-async def test_publisher_failure_is_contained_and_deduped_for_the_ttl():
+async def test_publisher_failure_is_contained_and_remains_retryable():
     publisher = _Publisher(failure=RuntimeError("sensitive downstream detail"))
     coordinator = _coordinator(publisher)
 
@@ -106,7 +106,7 @@ async def test_publisher_failure_is_contained_and_deduped_for_the_ttl():
     coordinator.notify_in_background(_resource())
     await _settle(coordinator)
 
-    assert len(publisher.calls) == 1
+    assert len(publisher.calls) == 2
 
 
 @pytest.mark.asyncio

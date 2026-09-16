@@ -8,10 +8,13 @@ provides:
   - TcResourceReadyCoordinator
   - TcResourceReadyObserverProtocol
 consumes:
-  - TcResourceReadyPublisherPort
+  - TcResourceReadyPublisherPlugin
+  - TcResourceContextService
   - SessionResourceRecord
 internal_dependencies:
-  - agentclaw.community.core.ports
+  - agentclaw.community.core.bot_management.token_vault
+  - agentclaw.community.core.repository.protocols.platform
+  - agentclaw.community.plugin_api.tc_resource_ready
   - agentclaw.community.core.session_resources
 ```
 
@@ -28,7 +31,7 @@ file, transfer, or download data. The receiving OCB/ECB integration resolves
 those facts from authoritative storage by `res_id`.
 
 Delivery remains best-effort and non-blocking. In-flight work is capped, and
-completed attempts are deduplicated by a bounded TTL/LRU cache. Scheduling,
+successful deliveries are deduplicated by a bounded TTL/LRU cache. Scheduling,
 overload, and downstream delivery failures are logged without changing the TC
 API result. There is no durable outbox, retry worker, or restart-safe guarantee
 in this phase.

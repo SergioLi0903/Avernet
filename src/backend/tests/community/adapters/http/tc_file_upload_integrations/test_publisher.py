@@ -6,16 +6,16 @@ import pytest
 from agentclaw.community.adapters.http.tc_file_upload_integrations.tc_resource_ready_publisher import (
     HttpTcResourceReadyPublisher,
 )
-from agentclaw.community.core.ports.tc_resource_ready_port import TcResourceReadyEvent
+from agentclaw.community.plugin_api.tc_resource_ready import TcResourceReadyEvent
 
 
 class _HttpClient:
     def __init__(self, status_code: int = 200) -> None:
         self.status_code = status_code
-        self.calls: list[tuple[str, dict, float]] = []
+        self.calls: list[tuple[str, dict, dict, float]] = []
 
-    def post(self, path, *, json, timeout):
-        self.calls.append((path, json, timeout))
+    def post(self, path, *, json, headers, timeout):
+        self.calls.append((path, json, headers, timeout))
         return httpx.Response(
             self.status_code,
             request=httpx.Request("POST", path),
@@ -28,6 +28,7 @@ async def test_http_publisher_posts_the_exact_event_to_the_contract_path():
     http_client = _HttpClient()
     publisher = HttpTcResourceReadyPublisher(
         base_url="http://knowledge.example/",
+        authorization_value="service-secret",
         http_client=http_client,
         timeout_seconds=12.0,
         worker_threads=1,
@@ -37,7 +38,7 @@ async def test_http_publisher_posts_the_exact_event_to_the_contract_path():
     finally:
         publisher._executor.shutdown(wait=True)
 
-    url, payload, timeout = http_client.calls[0]
+    url, payload, headers, timeout = http_client.calls[0]
     assert url == (
         "http://knowledge.example"
         "/api/v1/knowledge/integrations/tc/files/upload-completed"
@@ -47,6 +48,7 @@ async def test_http_publisher_posts_the_exact_event_to_the_contract_path():
         "event_id": "tc.resource.ready:sr_001",
         "res_id": "sr_001",
     }
+    assert headers == {"Authorization": "Bearer service-secret"}
     assert timeout == 12.0
 
 
@@ -54,6 +56,7 @@ async def test_http_publisher_posts_the_exact_event_to_the_contract_path():
 async def test_http_publisher_rejects_an_unconfigured_base_url():
     publisher = HttpTcResourceReadyPublisher(
         base_url="",
+        authorization_value="service-secret",
         http_client=_HttpClient(),
         worker_threads=1,
     )
@@ -65,9 +68,25 @@ async def test_http_publisher_rejects_an_unconfigured_base_url():
 
 
 @pytest.mark.asyncio
+async def test_http_publisher_rejects_an_unconfigured_service_token():
+    publisher = HttpTcResourceReadyPublisher(
+        base_url="http://knowledge.example",
+        authorization_value="",
+        http_client=_HttpClient(),
+        worker_threads=1,
+    )
+    try:
+        with pytest.raises(ValueError, match="tc_file_service_token_not_configured"):
+            await publisher.publish(TcResourceReadyEvent.for_resource("sr_001"))
+    finally:
+        publisher._executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
 async def test_http_publisher_surfaces_non_2xx_response():
     publisher = HttpTcResourceReadyPublisher(
         base_url="http://knowledge.example",
+        authorization_value="service-secret",
         http_client=_HttpClient(status_code=502),
         worker_threads=1,
     )
@@ -89,6 +108,7 @@ def test_http_publisher_rejects_unbounded_execution_configuration(kwargs, error)
     with pytest.raises(ValueError, match=error):
         HttpTcResourceReadyPublisher(
             base_url="http://knowledge.example",
+            authorization_value="service-secret",
             http_client=_HttpClient(),
             **kwargs,
         )

@@ -278,6 +278,7 @@ class SecretNamesConfig:
 
     dormant_internal_token: str = ""
     skill_center_internal_token: str = ""
+    tc_file_service_token: str = ""
     aiworkbench_repo_url: str = ""
     gateway_principal_signing_key: str = "gateway_principal_signing_key"
     aicoding_theta_master_key: str = ""
@@ -487,6 +488,7 @@ class EcbConfig:
 
     base_url: str = ""
     base_url_pre: str = ""
+    resource_ready_base_url: str = ""
     resource_ready_timeout_seconds: float = 10.0
     resource_ready_worker_threads: int = 2
     resource_ready_max_in_flight: int = 8
@@ -781,6 +783,13 @@ class DormantInternalToken:
     Empty ``value`` makes the auth Depends 401 all requests
     (feature-off failure mode).
     """
+
+    value: str = ""
+
+
+@dataclass(frozen=True)
+class TcFileServiceToken:
+    """Resolved shared Bearer token for the OCB ↔ ECB TC integration."""
 
     value: str = ""
 

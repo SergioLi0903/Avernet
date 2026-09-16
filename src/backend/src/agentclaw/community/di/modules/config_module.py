@@ -510,7 +510,6 @@ class ConfigModule(Module):
             ),
             raw=user_block,
         )
-
     @singleton
     @provider
     def aix(self) -> cfg.AixConfig:
@@ -521,7 +520,6 @@ class ConfigModule(Module):
         return cfg.AixConfig(
             preview_url=block.get("preview_url", defaults.preview_url),
         )
-
     @singleton
     @provider
     def ecb(self) -> cfg.EcbConfig:
@@ -531,6 +529,9 @@ class ConfigModule(Module):
         return cfg.EcbConfig(
             base_url=block.get("base_url", defaults.base_url),
             base_url_pre=block.get("base_url_pre", defaults.base_url_pre),
+            resource_ready_base_url=block.get(
+                "resource_ready_base_url", defaults.resource_ready_base_url
+            ),
             **resource_ready_settings(block, defaults, coerce=_coerce, as_int=_as_int),
         )
     @singleton
@@ -544,7 +545,6 @@ class ConfigModule(Module):
             base_url=block.get("base_url", defaults.base_url),
             base_url_pre=block.get("base_url_pre", defaults.base_url_pre),
         )
-
     @singleton
     @provider
     @inject
