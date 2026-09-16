@@ -171,17 +171,37 @@ async def test_upload_intent_keeps_the_primary_service_contract_only():
     assert "mime_type" not in result["files"][0]
 
 
-def test_upload_intent_rejects_sidecar_authority_fields():
-    for field in ("conversation_id", "group_id", "members"):
-        with pytest.raises(ValidationError, match="extra_forbidden"):
-            UploadIntentRequest(
-                bot_id="bot-1",
-                session_key="session-raw",
-                scope_type="friend_bot_chat",
-                engine_type="openclaw",
-                files=[{"filename": "report.txt"}],
-                **{field: [] if field == "members" else "untrusted"},
-            )
+def test_upload_intent_ignores_sidecar_authority_and_legacy_extra_fields():
+    body = UploadIntentRequest.model_validate(
+        {
+            "bot_id": "bot-1",
+            "session_key": "session-raw",
+            "scope_type": "friend_bot_chat",
+            "engine_type": "openclaw",
+            "files": [{"filename": "report.txt"}],
+            "conversation_id": "untrusted",
+            "group_id": "untrusted",
+            "members": ["untrusted"],
+            "mime_type": "text/plain",
+            "client_version": "legacy",
+        }
+    )
+
+    assert body.model_dump() == {
+        "bot_id": "bot-1",
+        "session_key": "session-raw",
+        "scope_type": "friend_bot_chat",
+        "engine_type": "openclaw",
+        "target_entity_id": None,
+        "binding_id": None,
+        "files": [
+            {
+                "filename": "report.txt",
+                "size_bytes": None,
+                "content_hash": None,
+            }
+        ],
+    }
 
 
 def test_upload_intent_request_accepts_positive_binding_id_only():

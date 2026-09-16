@@ -1,7 +1,7 @@
 """HTTP schemas for session resources."""
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class UploadIntentFile(BaseModel):
@@ -11,8 +11,6 @@ class UploadIntentFile(BaseModel):
 
 
 class UploadIntentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     bot_id: str
     session_key: str
     scope_type: str
