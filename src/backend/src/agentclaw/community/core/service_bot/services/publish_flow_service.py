@@ -1,7 +1,4 @@
-"""Bot publish flow processing service.
-
-Advances the different stages of the publish flow based on the publish record status.
-"""
+"""Bot publish flow processing service — stage advances based on publish record status."""
 
 from __future__ import annotations
 
@@ -59,6 +56,7 @@ from agentclaw.community.core.service_bot.services.publish_flow.provider_behavio
     TeclawProviderBehavior,
 )
 from agentclaw.community.core.service_bot.services.publish_flow.build_stage import (
+    BuildArtifactOnlyResult,
     BuildStageRunner,
 )
 from agentclaw.community.core.service_bot.services.publish_flow.progress_sync_mixin import (
@@ -171,18 +169,9 @@ class PublishFlowService(
     DraftRestoreOpsMixin,
     PublishImagePolicyMixin,
 ):
-    """Bot publish flow processing service.
+    """Bot publish flow: stage coordination and status transitions.
 
-    Responsibilities:
-    - Determine the current stage based on the publish record status
-    - Coordinate BotBuildService and BotPublishService to complete the publish flow
-    - Manage status transitions
-
-    Status transitions:
-    - DRAFT -> BUILDING -> BUILT (build stage)
-    - BUILT -> VALIDATE_PUB -> VALIDATING (verify environment publish stage)
-    - VALIDATING -> ONLINE_PUB -> SUCCESS (online publish stage)
-    - Any status -> FAILED (failure)
+    DRAFT→BUILDING→BUILT→VALIDATE_PUB→VALIDATING→ONLINE_PUB→SUCCESS; any→FAILED.
     """
 
     @inject
@@ -522,6 +511,13 @@ class PublishFlowService(
     ) -> PublishFlowResult:
         """Run the build stage (BUILDING → BUILT). Delegates to BuildStageRunner."""
         return await self._build_stage_runner.build(publish_record, operator)
+
+    async def execute_build_artifact_only(
+        self,
+        publish_record: BotPublishRecord,
+    ) -> BuildArtifactOnlyResult:
+        """Build artifact without advancing publish status (Eval DRAFT path)."""
+        return await self._build_stage_runner.build_artifact_only(publish_record)
 
     async def execute_verify_release_phase(
         self,
