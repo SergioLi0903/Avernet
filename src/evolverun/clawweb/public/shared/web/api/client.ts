@@ -121,6 +121,27 @@ import type { EvolveTaskType } from '../types'
 
 const BASE = '/api'
 
+export type ApprovalCardSummary = {
+  id: number
+  flowId: string
+  nodeId: string
+  workflowId: string
+  workflowTitle: string | null
+  approvalType: string | null
+  message: string | null
+  cardFields: Array<{ label: string; value: string; expectedLabel?: string; expected?: string; actualLabel?: string; actual?: string }> | Record<string, unknown>
+  approverIds: string[]
+  approverNames: string[]
+  approvalPolicy: string
+  approvedBy: string[]
+  rejectedBy: string[]
+  status: string
+  deliveryMode: string
+  createdAt: number
+  resolvedAt: number | null
+  isApprover: boolean
+}
+
 export type EvolveStep = {
   stepId: string
   taskId: string
@@ -2600,6 +2621,12 @@ export const api = {
       return fetchJson(`${BASE}/log-analysis/results/${encodeURIComponent(analysisId)}/ignore`, {
         method: 'POST',
       })
+    },
+  },
+
+  approval: {
+    listByFlow(flowId: string): Promise<{ items: ApprovalCardSummary[] }> {
+      return fetchJson(`${BASE}/approval/by-flow/${encodeURIComponent(flowId)}`)
     },
   },
 }

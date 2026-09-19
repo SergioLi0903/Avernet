@@ -1554,3 +1554,12 @@ export function useRestoreWorkflowVersion() {
     },
   })
 }
+
+export function useFlowApprovals(flowId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['flow-approvals', flowId],
+    queryFn: () => api.approval.listByFlow(flowId),
+    enabled: enabled && !!flowId,
+    refetchInterval: 5000,
+  })
+}

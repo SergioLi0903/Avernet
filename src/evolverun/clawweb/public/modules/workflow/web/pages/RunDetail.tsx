@@ -15,6 +15,10 @@ import type { RunEvolutionAnalysisResponse, WorkflowAnalysisProgressResponse } f
 import type { FlowRun, NodeExecution } from '@avernet/clawweb-shared/web/types'
 import RunArchivePanel from '../components/RunArchivePanel'
 import AutoHealPanel from '../components/AutoHealPanel'
+import ApprovalPanel from '../components/ApprovalPanel'
+import ApprovalSlidePanel from '../components/ApprovalSlidePanel'
+import { useFlowApprovals } from '@avernet/clawweb-shared/web/api/hooks'
+import type { ApprovalCardSummary } from '@avernet/clawweb-shared/web/api/client'
 
 type TabId = 'nodes' | 'logs' | 'dag' | 'archive'
 
@@ -48,6 +52,12 @@ export default function RunDetail() {
   const [analyzingNode, setAnalyzingNode] = useState<NodeExecution | null>(null)
   const [analyzeModalOpen, setAnalyzeModalOpen] = useState(false)
   const [autoHealRun, setAutoHealRun] = useState<FlowRun | null>(null)
+  const [approvalCard, setApprovalCard] = useState<ApprovalCardSummary | null>(null)
+
+  const approvalsQuery = useFlowApprovals(flowId ?? '')
+  const approvalCards = approvalsQuery.data?.items ?? []
+  const pendingApprovals = approvalCards.filter((c) => c.status === 'pending')
+  const pendingApprovalNodeIds = useMemo(() => new Set(pendingApprovals.map((c) => c.nodeId)), [pendingApprovals])
 
   const {
     data: runDetail,
@@ -183,7 +193,7 @@ export default function RunDetail() {
         </div>
       ) : run ? (
         <>
-          <RunSummaryHeader run={run} nodeCount={nodeProgress.total} succeededCount={nodeProgress.succeeded} failedCount={nodeProgress.failed} onAutoHeal={(selected) => setAutoHealRun(selected)} />
+          <RunSummaryHeader run={run} nodeCount={nodeProgress.total} succeededCount={nodeProgress.succeeded} failedCount={nodeProgress.failed} onAutoHeal={(selected) => setAutoHealRun(selected)} onApproval={() => setApprovalCard(pendingApprovals[0] ?? approvalCards[0])} pendingApprovalCount={pendingApprovals.length} />
 
           <div className="mt-4">
             <InterventionPanel
@@ -191,6 +201,10 @@ export default function RunDetail() {
               runStatus={run.status}
               nodes={nodes}
             />
+          </div>
+
+          <div className="mt-4">
+            <ApprovalPanel flowId={flowId ?? ''} />
           </div>
 
           <div className="mt-4">
@@ -233,6 +247,14 @@ export default function RunDetail() {
               onRerunComplete={() => void refetchRun()}
             />
           )}
+          {approvalCard && run && (
+            <ApprovalSlidePanel
+              card={approvalCard}
+              run={run}
+              onClose={() => setApprovalCard(null)}
+              onResolved={() => void approvalsQuery.refetch()}
+            />
+          )}
           <div className="mt-5 border-b border-slate-200">
             <nav className="-mb-px flex gap-5" aria-label="运行详情视图">
               <TabButton active={activeTab === 'nodes'} onClick={() => setActiveTab('nodes')} label="节点" />
@@ -251,6 +273,11 @@ export default function RunDetail() {
                   selectedNodeId={selectedNodeId ?? undefined}
                   workflowSpec={workflowQuery.data}
                   onAnalyze={handleAnalyze}
+                  onApproval={(node) => {
+                    const card = pendingApprovals.find((c) => c.nodeId === node.node_id)
+                    if (card) setApprovalCard(card)
+                  }}
+                  approvalNodeIds={pendingApprovalNodeIds}
                 />
               </div>
             )}

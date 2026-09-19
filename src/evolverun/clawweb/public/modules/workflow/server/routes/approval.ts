@@ -46,6 +46,60 @@ export function createApprovalRouter(db: IDatabase): Router {
   }));
 
   /**
+   * GET /api/approval/by-flow/:flowId — list approval cards for a run
+   *
+   * Returns all approval cards associated with the given flow_id (run ID),
+   * newest first. Each card has the same shape as GET /api/approval/:id.
+   */
+  router.get("/by-flow/:flowId", asyncHandler(async (req: Request, res: Response) => {
+    const flowId = String(req.params.flowId);
+    if (!flowId) {
+      res.status(400).json({ error: "Bad Request", message: "缺少 flowId" });
+      return;
+    }
+
+    const cards = await repo.findByFlowId(flowId);
+    const empId = String(req.query.empId ?? "");
+
+    const items = cards.map((card) => {
+      const isApprover = empId ? repo.isApprover(card, empId) : false;
+      const approvedBy = repo.parseList(card.approved_by);
+      const rejectedBy = repo.parseList(card.rejected_by);
+      const approverIds = repo.parseList(card.approver_ids);
+      const approverNames = card.approver_names
+        ? card.approver_names.split(",").map((s) => s.trim())
+        : approverIds;
+      const { fields: cardFields, sections, display } = parseApprovalCardContent(card.card_fields_json);
+
+      const item: Record<string, unknown> = {
+        id: card.id,
+        flowId: card.flow_id,
+        nodeId: card.node_id,
+        workflowId: card.workflow_id,
+        workflowTitle: card.workflow_title,
+        approvalType: card.approval_type,
+        message: card.message,
+        cardFields,
+        ...(display ? { display } : {}),
+        approverIds,
+        approverNames,
+        approvalPolicy: card.approval_policy,
+        approvedBy,
+        rejectedBy,
+        status: card.status,
+        deliveryMode: card.delivery_mode,
+        createdAt: card.created_at,
+        resolvedAt: card.resolved_at,
+        isApprover,
+      };
+      if (sections) item.sections = sections;
+      return item;
+    });
+
+    res.json({ items });
+  }));
+
+  /**
    * GET /api/approval/:id — get approval details
    *
    * Query param: empId (optional) — if provided, checks if this person is an approver

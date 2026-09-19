@@ -37,6 +37,7 @@ vi.mock('@avernet/clawweb-shared/web/api/hooks', () => ({
   useDeleteFlowRun: () => ({ mutate: vi.fn(), isPending: false }),
   useRerunFlowRun: () => ({ mutate: vi.fn(), isPending: false }),
   useRunArchive: () => ({ data: null, isLoading: false, isError: false, error: null }),
+  useFlowApprovals: () => ({ data: { items: [] }, isLoading: false }),
 }))
 
 import OverviewTab from '../OverviewTab'

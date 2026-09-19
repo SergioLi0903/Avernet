@@ -9,11 +9,13 @@ interface RunSummaryHeaderProps {
   succeededCount?: number
   failedCount?: number
   onAutoHeal?: (run: FlowRun) => void
+  onApproval?: () => void
+  pendingApprovalCount?: number
 }
 
 import { formatTime, formatDuration } from '@avernet/workflow/web/utils/time'
 
-export default function RunSummaryHeader({ run, nodeCount, succeededCount, failedCount, onAutoHeal }: RunSummaryHeaderProps) {
+export default function RunSummaryHeader({ run, nodeCount, succeededCount, failedCount, onAutoHeal, onApproval, pendingApprovalCount = 0 }: RunSummaryHeaderProps) {
   const succeeded = succeededCount ?? run.succeeded_count
   const failed = failedCount ?? run.failed_count
   const succeededPct = nodeCount > 0 ? Math.round((succeeded / nodeCount) * 100) : 0
@@ -130,6 +132,19 @@ export default function RunSummaryHeader({ run, nodeCount, succeededCount, faile
               title="AI 自动诊断与修复"
             >
               🩹 修复
+            </button>
+          )}
+          {run.status === 'waiting' && pendingApprovalCount > 0 && onApproval && (
+            <button
+              type="button"
+              onClick={onApproval}
+              className="inline-flex items-center gap-0.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 transition-colors hover:border-amber-400 hover:bg-amber-100"
+              title="审批"
+            >
+              📋 审批
+              {pendingApprovalCount > 1 && (
+                <span className="ml-0.5 rounded-full bg-amber-200 px-1 text-[10px] leading-none text-amber-800">{pendingApprovalCount}</span>
+              )}
             </button>
           )}
           {confirming ? (

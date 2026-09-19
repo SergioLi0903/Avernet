@@ -126,6 +126,14 @@ export class ApprovalCardRepository {
     );
   }
 
+  /** Find all approval cards for a given flow (run), newest first. */
+  async findByFlowId(flowId: string): Promise<ApprovalCardRow[]> {
+    return this.db.query<ApprovalCardRow>(
+      "SELECT * FROM approval_cards WHERE flow_id = ? ORDER BY created_at DESC",
+      [flowId],
+    );
+  }
+
   /** Check if an empId is in the approver list for a card. */
   isApprover(card: ApprovalCardRow, empId: string): boolean {
     const ids = card.approver_ids.split(",").map((s) => s.trim());

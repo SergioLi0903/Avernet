@@ -380,6 +380,30 @@ function SectionCard({ sections, selection, setSelection, disabled }: SectionCar
                         )
                       }
 
+                      // ── Mode 3: REFERENCE (full-width block + actions) ──
+                      if (isInteractive && hasExpected && !hasActual) {
+                        return (
+                          <div style={{ marginBottom: 10 }}>
+                            <div style={{
+                              padding: '10px 12px',
+                              background: COLOR.borderLight,
+                              borderRadius: 8,
+                              marginBottom: 10,
+                              fontSize: 13,
+                              color: '#374151',
+                              lineHeight: 1.6,
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                            }}>
+                              {field.expectedLabel && (
+                                <div style={{ fontSize: 11, color: COLOR.textTertiary, marginBottom: 4 }}>{field.expectedLabel}</div>
+                              )}
+                              <div>{field.expected || '—'}</div>
+                            </div>
+                          </div>
+                        )
+                      }
+
                       return null
                     })()}
 
