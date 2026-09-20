@@ -14,8 +14,10 @@ from agentclaw.community.adapters.http.openapi_v1.dependencies import (
 )
 from agentclaw.community.adapters.http.openapi_v1.errors import GrantNotResolvableError
 from agentclaw.community.adapters.http.openapi_v1.principal import (
+    OWNER_ID_DESCRIPTION,
     ActingCallerDep,
     UserIdDep,
+    addressed_owner,
     caller_owner_id,
     refuse_app_only_caller,
 )
@@ -225,19 +227,35 @@ async def create_bot_editor_request(
     body: CreateBotEditorRequest,
     request: Request,
     caller: ActingCallerDep,
-    owner_id: Annotated[
+    # Declared here rather than through ``OwnerIdDep``: that dependency carries
+    # the addressed-bot grant check, and this operation is ``USER_GATED`` with
+    # the work-order service adjudicating (the applicant is, by definition, not
+    # yet a collaborator, so the grant check's masked 404 would be the wrong
+    # answer). The admission inventory holds each route to its mode's
+    # dependency, so the pair is spelled out and resolved through the same
+    # ``addressed_owner`` rule every other reader uses.
+    entity_id: Annotated[
         str | None,
         Query(
             max_length=256,
             description="Owner of the Bot. Defaults to the current user.",
         ),
     ] = None,
+    owner_id: Annotated[
+        str | None,
+        Query(max_length=256, deprecated=True, description=OWNER_ID_DESCRIPTION),
+    ] = None,
     service: WorkOrderServiceProtocol = Injected(WorkOrderServiceProtocol),
 ) -> Envelope[BotEditorRequestCreated]:
     actor_id = _require_user_delegation(caller)
+    # Same rule as every other reader of the addressed owner: ``entity_id``,
+    # else its retiring alias, else the caller. Empty is absent here as it is
+    # for the grant dependency's raw read, so ``?entity_id=&owner_id=x``
+    # falls back to ``owner_id`` rather than tripping the disagreement 422.
+    named_owner = addressed_owner(entity_id or None, owner_id or None)
     record = service.create_bot_editor_request(
         bot_id=bot_id,
-        owner_id=owner_id or actor_id,
+        owner_id=named_owner or actor_id,
         applicant_user_id=actor_id,
         reason=body.reason,
     )
