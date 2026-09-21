@@ -30,7 +30,7 @@ class TcResourceContextSnapshot:
     bot_uuid: str
     user_id: str
     bot_id: str
-    owner_id: str
+    bot_owner_id: str
     filename: str
     size_bytes: int
     content_sha256: str | None
@@ -53,7 +53,7 @@ class TcResourceContextSnapshot:
             "bot_uuid": self.bot_uuid,
             "user_id": self.user_id,
             "bot_id": self.bot_id,
-            "owner_id": self.owner_id,
+            "bot_owner_id": self.bot_owner_id,
             "filename": self.filename,
             "size_bytes": self.size_bytes,
             "content_sha256": self.content_sha256,
@@ -119,7 +119,7 @@ class TcResourceContextService:
         }:
             raise ValueError("resource_context_unsupported_scope")
 
-        owner_id = self._resolve_owner_id(record)
+        bot_owner_id = self._resolve_bot_owner_id(record)
 
         digest = record.client_content_hash
         content_sha256 = (
@@ -139,7 +139,7 @@ class TcResourceContextService:
             bot_uuid=record.bot_uuid,
             user_id=record.owner_id,
             bot_id=record.bot_id,
-            owner_id=owner_id,
+            bot_owner_id=bot_owner_id,
             filename=record.filename,
             size_bytes=record.size_bytes,
             content_sha256=content_sha256,
@@ -153,7 +153,7 @@ class TcResourceContextService:
             session_active=active,
         )
 
-    def _resolve_owner_id(self, record: SessionResourceRecord) -> str:
+    def _resolve_bot_owner_id(self, record: SessionResourceRecord) -> str:
         binding_id = record.binding_id
         if type(binding_id) is not int or binding_id <= 0:
             raise ValueError("resource_context_incomplete")
@@ -162,7 +162,7 @@ class TcResourceContextService:
         if binding is None or binding.device_id != record.bot_uuid:
             raise ValueError("resource_context_incomplete")
 
-        owner_id = binding.entity_id
-        if not isinstance(owner_id, str) or not owner_id.strip():
+        bot_owner_id = binding.entity_id
+        if not isinstance(bot_owner_id, str) or not bot_owner_id.strip():
             raise ValueError("resource_context_incomplete")
-        return owner_id
+        return bot_owner_id

@@ -40,6 +40,6 @@ API result. There is no durable outbox, retry worker, or restart-safe guarantee
 in this phase.
 
 The internal resource-context response preserves the uploader as `user_id` and
-resolves the Bot `owner_id` from the resource's persisted `binding_id`. The binding
+resolves `bot_owner_id` from the resource's persisted `binding_id`. The binding
 must exist, identify the same `bot_uuid`, and contain a non-empty `entity_id`.
 Its current lifecycle status is not part of this historical ownership lookup.
