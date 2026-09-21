@@ -119,23 +119,7 @@ class TcResourceContextService:
         }:
             raise ValueError("resource_context_unsupported_scope")
 
-        binding_id = record.binding_id
-        if (
-            not isinstance(binding_id, int)
-            or isinstance(binding_id, bool)
-            or binding_id <= 0
-        ):
-            raise ValueError("resource_context_incomplete")
-        binding = self._device_binding_repository.get_by_id(binding_id)
-        if binding is None:
-            raise ValueError("resource_context_incomplete")
-        bot_owner_id = binding.entity_id
-        if (
-            not isinstance(bot_owner_id, str)
-            or not bot_owner_id.strip()
-            or binding.device_id != record.bot_uuid
-        ):
-            raise ValueError("resource_context_incomplete")
+        bot_owner_id = self._resolve_bot_owner_id(record)
 
         digest = record.client_content_hash
         content_sha256 = (
@@ -168,3 +152,17 @@ class TcResourceContextService:
             session_revision=max(record.task_version, 1),
             session_active=active,
         )
+
+    def _resolve_bot_owner_id(self, record: SessionResourceRecord) -> str:
+        binding_id = record.binding_id
+        if type(binding_id) is not int or binding_id <= 0:
+            raise ValueError("resource_context_incomplete")
+
+        binding = self._device_binding_repository.get_by_id(binding_id)
+        if binding is None or binding.device_id != record.bot_uuid:
+            raise ValueError("resource_context_incomplete")
+
+        bot_owner_id = binding.entity_id
+        if not isinstance(bot_owner_id, str) or not bot_owner_id.strip():
+            raise ValueError("resource_context_incomplete")
+        return bot_owner_id

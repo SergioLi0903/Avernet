@@ -120,7 +120,7 @@ def test_context_snapshot_maps_uploader_and_bot_owner_independently() -> None:
     }
 
 
-@pytest.mark.parametrize("binding_id", [None, 0, -1, True])
+@pytest.mark.parametrize("binding_id", [None, 0, -1, True, "11", 11.0])
 def test_context_snapshot_rejects_invalid_binding_id(binding_id) -> None:
     record = replace(_record(), binding_id=binding_id)
 
