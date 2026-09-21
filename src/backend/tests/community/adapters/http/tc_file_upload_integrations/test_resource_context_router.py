@@ -34,7 +34,7 @@ def _snapshot() -> TcResourceContextSnapshot:
         bot_uuid="bot-uuid-1",
         user_id="user-1",
         bot_id="bot-1",
-        bot_owner_id="bot-owner-1",
+        owner_id="bot-owner-1",
         filename="note.md",
         size_bytes=7,
         content_sha256=None,
@@ -59,7 +59,7 @@ def test_context_router_returns_strict_envelope_for_valid_bearer() -> None:
 
     assert response["code"] == 0
     assert response["data"]["resource_id"] == "sr_001"
-    assert response["data"]["bot_owner_id"] == "bot-owner-1"
+    assert response["data"]["owner_id"] == "bot-owner-1"
     assert response["data"]["members"] == []
 
 

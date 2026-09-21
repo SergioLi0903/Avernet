@@ -8,7 +8,7 @@ from tests.community.framework.flow import FlowCase, FlowStep
 
 _RESOURCE_ID = "sr_tc_flow"
 _OWNER_ID = "user_tc_flow"
-_BOT_OWNER_ID = "bot_owner_tc_flow"
+_BINDING_OWNER_ID = "bot_owner_tc_flow"
 _BOT_ID = "bot_tc_flow"
 _SESSION_ID = "session_tc_flow"
 _LOCAL_AUTH = "singlebox-tc-file-service-token-local"
@@ -41,7 +41,7 @@ TC_FILE_UPLOAD_INTEGRATION_FLOWS: list[FlowCase] = [
                                 "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
                             ),
                             "params": {
-                                "entity_id": _BOT_OWNER_ID,
+                                "entity_id": _BINDING_OWNER_ID,
                                 "applied_by": _OWNER_ID,
                             },
                         },
@@ -96,7 +96,7 @@ TC_FILE_UPLOAD_INTEGRATION_FLOWS: list[FlowCase] = [
                     "code": 0,
                     "data": {
                         "resource_id": _RESOURCE_ID,
-                        "bot_owner_id": _BOT_OWNER_ID,
+                        "owner_id": _BINDING_OWNER_ID,
                     },
                 },
             ),

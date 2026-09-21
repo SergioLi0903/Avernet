@@ -105,7 +105,7 @@ def test_context_snapshot_maps_uploader_and_bot_owner_independently() -> None:
         "bot_uuid": "bot-uuid-1",
         "user_id": "user-437240",
         "bot_id": "bot-1",
-        "bot_owner_id": "owner-490906",
+        "owner_id": "owner-490906",
         "filename": "note.md",
         "size_bytes": 7,
         "content_sha256": "a" * 64,

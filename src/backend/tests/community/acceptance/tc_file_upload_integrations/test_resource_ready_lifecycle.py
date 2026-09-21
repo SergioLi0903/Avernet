@@ -39,7 +39,7 @@ def test_resource_ready_event_and_authoritative_context_live(live_backend) -> No
     suffix = uuid.uuid4().hex[:10]
     resource_id = f"sr_tc_{suffix}"
     owner_id = f"user_tc_{suffix}"
-    bot_owner_id = f"bot_owner_tc_{suffix}"
+    binding_owner_id = f"bot_owner_tc_{suffix}"
     bot_id = f"bot_tc_{suffix}"
     bot_uuid = f"uuid-{suffix}"
     session_id = f"session_tc_{suffix}"
@@ -62,7 +62,7 @@ def test_resource_ready_event_and_authoritative_context_live(live_backend) -> No
                     ")"
                 ),
                 "params": {
-                    "entity_id": bot_owner_id,
+                    "entity_id": binding_owner_id,
                     "device_id": bot_uuid,
                     "applied_by": owner_id,
                 },
@@ -143,7 +143,7 @@ def test_resource_ready_event_and_authoritative_context_live(live_backend) -> No
                 "bot_uuid": bot_uuid,
                 "user_id": owner_id,
                 "bot_id": bot_id,
-                "bot_owner_id": bot_owner_id,
+                "owner_id": binding_owner_id,
                 "filename": "note.md",
                 "size_bytes": 7,
                 "content_sha256": content_hash,
